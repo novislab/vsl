@@ -1,18 +1,6 @@
-<div align="center">
+# `vsl`
 
-<img src="art/vsl-lockup.svg" alt="vsl — Worktree Preview CLI" width="680">
-
-<p>Sub-second HTTPS preview environments for Git worktrees — built with Laravel Zero, FrankenPHP Octane, Bun + Vite HMR, and Caddy.</p>
-
-<p>
-  <a href="#install">Install</a> ·
-  <a href="#commands">Commands</a> ·
-  <a href="#t3-code--server-setup">Setup</a> ·
-  <a href="#linux-arm64-static-build">ARM64 Build</a> ·
-  <a href="#art">Art</a>
-</p>
-
-</div>
+Sub-second HTTPS preview environments for Git worktrees — built with Laravel Zero, FrankenPHP Octane, Bun + Vite HMR, and Caddy.
 
 ---
 
@@ -126,18 +114,4 @@ Build a standalone static ELF binary via `static-php-cli` (`spc`) on EC2 ARM64:
 ```bash
 composer install
 ./vendor/bin/pest
-```
-
----
-
-## Art
-
-| Icon | Dark Mark | Light Mark |
-| :---: | :---: | :---: |
-| <img src="art/vsl-icon.png" alt="vsl icon" width="84"> | <img src="art/vsl-mark.png" alt="vsl dark mark" width="84"> | <img src="art/vsl-mark-light.png" alt="vsl light mark" width="84"> |
-
-Regenerate SVGs and 1024×1024 PNGs:
-
-```bash
-python3 art/generate_logo.py
 ```

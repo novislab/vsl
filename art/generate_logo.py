@@ -8,7 +8,9 @@ and anti-aliased 1024x1024 PNG renders via a pure-Python analytical SDF rasteriz
 from __future__ import annotations
 
 import math
+import shutil
 import struct
+import subprocess
 import zlib
 from pathlib import Path
 
@@ -323,6 +325,85 @@ def write_svgs() -> list[Path]:
     )
     written.append(p4)
 
+    defs_og, group_og = build_emblem_group("dark", "vsl-og")
+    p5 = OUT_DIR / "vsl-og.svg"
+    # GitHub OG safe zone: 1280x640 with >= 80px (40pt @2x) safe margin on all sides (x: 80..1200, y: 80..560)
+    p5.write_text(
+        f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" fill="none">
+  <defs>
+    <linearGradient id="og-bg" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E1B4B"/>
+      <stop offset="52%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#060B16"/>
+    </linearGradient>
+    <radialGradient id="og-glow-tr" cx="980" cy="110" r="460" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22D3EE" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#10B981" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#060B16" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="og-glow-bl" cx="240" cy="540" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.26"/>
+      <stop offset="100%" stop-color="#060B16" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="og-dots" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="1.2" fill="#94A3B8" fill-opacity="0.16"/>
+    </pattern>
+    <linearGradient id="og-title" x1="590" y1="120" x2="820" y2="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#C7D2FE"/>
+    </linearGradient>
+    <linearGradient id="og-accent" x1="360" y1="490" x2="920" y2="490" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="og-card-rim" x1="80" y1="80" x2="1200" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#A5B4FC" stop-opacity="0.24"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0.24"/>
+    </linearGradient>
+    {defs_og}
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#og-bg)"/>
+  <rect width="1280" height="640" fill="url(#og-dots)"/>
+  <rect width="1280" height="640" fill="url(#og-glow-tr)"/>
+  <rect width="1280" height="640" fill="url(#og-glow-bl)"/>
+
+  <!-- Subtle safe-zone frame matching GitHub OG card padding -->
+  <rect x="80" y="80" width="1120" height="480" rx="32" fill="#0B1120" fill-opacity="0.45" stroke="url(#og-card-rim)" stroke-width="2"/>
+
+  <!-- Top hero row: emblem + vsl wordmark centered horizontally -->
+  <g transform="translate(426 126) scale(0.32)">
+    {group_og}
+  </g>
+  <text x="614" y="248"
+        font-family="DejaVu Sans, Inter, sans-serif"
+        font-size="122" font-weight="700" letter-spacing="-4" fill="url(#og-title)">vsl</text>
+
+  <!-- Repo tag pill -->
+  <rect x="536" y="302" width="208" height="34" rx="17" fill="#1E293B" stroke="#334155" stroke-width="1.5"/>
+  <text x="640" y="324" text-anchor="middle"
+        font-family="DejaVu Sans Mono, monospace"
+        font-size="16" font-weight="700" letter-spacing="1.5" fill="#34D399">novislab / vsl</text>
+
+  <!-- Headline & concise stack summary (kept comfortably inside safe 80px margin) -->
+  <text x="640" y="398" text-anchor="middle"
+        font-family="DejaVu Sans, Inter, sans-serif"
+        font-size="44" font-weight="700" fill="#F8FAFC">Worktree Preview CLI</text>
+
+  <text x="640" y="452" text-anchor="middle"
+        font-family="DejaVu Sans, Inter, sans-serif"
+        font-size="24" font-weight="400" fill="#CBD5E1">Sub-second HTTPS previews for Git worktrees &amp; T3 Code</text>
+
+  <text x="640" y="496" text-anchor="middle"
+        font-family="DejaVu Sans Mono, monospace"
+        font-size="18" font-weight="700" letter-spacing="0.5" fill="url(#og-accent)">FrankenPHP Octane  ·  Bun + Vite HMR  ·  Isolated DBs  ·  Caddy Auto-TLS</text>
+</svg>
+''',
+        encoding="utf-8",
+    )
+    written.append(p5)
+
     return written
 
 
@@ -574,16 +655,25 @@ def render_png(path: Path, size: int = 1024, with_squircle_bg: bool = False, the
     path.write_bytes(encode_png(size, size, rows))
 
 
+def render_og_png(svg_path: Path, png_path: Path) -> None:
+    rsvg = shutil.which("rsvg-convert")
+    if rsvg is None:
+        raise RuntimeError("rsvg-convert is required to rasterize vsl-og.svg into vsl-og.png")
+    subprocess.run([rsvg, "-w", "1280", "-h", "640", str(svg_path), "-o", str(png_path)], check=True)
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     svgs = write_svgs()
     png_mark = OUT_DIR / "vsl-mark.png"
     png_mark_light = OUT_DIR / "vsl-mark-light.png"
     png_icon = OUT_DIR / "vsl-icon.png"
+    png_og = OUT_DIR / "vsl-og.png"
     render_png(png_mark, size=1024, with_squircle_bg=False, theme="dark")
     render_png(png_mark_light, size=1024, with_squircle_bg=False, theme="light")
     render_png(png_icon, size=1024, with_squircle_bg=True, theme="dark")
-    for p in [*svgs, png_mark, png_mark_light, png_icon]:
+    render_og_png(OUT_DIR / "vsl-og.svg", png_og)
+    for p in [*svgs, png_mark, png_mark_light, png_icon, png_og]:
         print(f"Generated {p}")
 
 

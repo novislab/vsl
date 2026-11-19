@@ -1,0 +1,8 @@
+{
+  "worktree": {
+    "hooks": {
+      "post-create": "/usr/local/bin/vsl up --path=\"$WORKTREE_PATH\"",
+      "post-remove": "/usr/local/bin/vsl down --path=\"$WORKTREE_PATH\""
+    }
+  }
+}

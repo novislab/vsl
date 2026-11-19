@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <defs>
+    <linearGradient id="vsl-light-portal" x1="80" y1="420" x2="360" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+    <linearGradient id="vsl-light-trunk" x1="180" y1="346" x2="180" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#64748B"/>
+      <stop offset="100%" stop-color="#475569"/>
+    </linearGradient>
+    <linearGradient id="vsl-light-branch" x1="180" y1="346" x2="360" y2="136" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="vsl-light-beacon" x1="320" y1="176" x2="440" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <mask id="vsl-light-root-mask">
+      <rect x="0" y="0" width="512" height="512" fill="white"/>
+      <circle cx="180.00" cy="346.00" r="11.00" fill="black"/>
+    </mask>
+    </defs>
+  
+    <g id="vsl-light-emblem">
+      <!-- Outer Worktree Sandbox Portal -->
+      <path d="M 360.00 276.00 L 360.00 366.00 A 54.00 54.00 0 0 1 306.00 420.00 L 142.00 420.00 A 54.00 54.00 0 0 1 88.00 366.00 L 88.00 202.00 A 54.00 54.00 0 0 1 142.00 148.00 L 232.00 148.00"
+            fill="none"
+            stroke="url(#vsl-light-portal)"
+            stroke-width="48.0"
+            stroke-linecap="round"
+            stroke-linejoin="round"/>
+
+      <!-- Parallel Worktree Stem (Trunk + Isolated Node) -->
+      <g mask="url(#vsl-light-root-mask)">
+        <line x1="180.00" y1="346.00"
+              x2="180.00" y2="220.00"
+              stroke="url(#vsl-light-trunk)"
+              stroke-width="34.0"
+              stroke-linecap="round"/>
+        <circle cx="180.00" cy="220.00" r="23.0"
+                fill="url(#vsl-light-trunk)"/>
+
+        <!-- Live Preview Branch Launching Through Portal -->
+        <path d="M 180.00 346.00 A 72.00 72.00 0 0 1 201.09 295.09 L 360.00 136.18"
+              fill="none"
+              stroke="url(#vsl-light-branch)"
+              stroke-width="34.0"
+              stroke-linecap="round"
+              stroke-linejoin="round"/>
+
+        <!-- Root Node Ring -->
+        <circle cx="180.00" cy="346.00" r="30.0"
+                fill="url(#vsl-light-branch)"/>
+      </g>
+
+      <!-- Live HTTPS Beacon Node -->
+      <circle cx="360.00" cy="136.18" r="32.0"
+              fill="url(#vsl-light-beacon)"/>
+      <circle cx="360.00" cy="136.18" r="11.0"
+              fill="#FFFFFF"/>
+
+      <!-- Live Broadcast Signal Arcs -->
+      <path d="M 373.31 73.58 A 64.00 64.00 0 0 1 422.60 122.87"
+            fill="none"
+            stroke="url(#vsl-light-beacon)"
+            stroke-width="19.0"
+            stroke-linecap="round"/>
+      <path d="M 388.43 48.68 A 92.00 92.00 0 0 1 447.50 107.75"
+            fill="none"
+            stroke="url(#vsl-light-beacon)"
+            stroke-width="15.0"
+            stroke-linecap="round"
+            opacity="0.58"/>
+    </g>
+    
+</svg>

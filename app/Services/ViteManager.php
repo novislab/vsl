@@ -260,7 +260,7 @@ JS;
             return null;
         }
 
-        $pgid = function_exists('posix_getpgid') ? (posix_getpgid($pid) ?: $pid) : $pid;
+        $pgid = OctaneManager::resolveChildPgid($pid);
 
         return [
             'port' => $vitePort,

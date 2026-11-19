@@ -213,6 +213,8 @@ class UpCommand extends Command
         $reloadLabel = match ($spawnedOctane['reload_strategy'] ?? 'stateless-dev') {
             'watch' => 'live --watch',
             'stateless-dev' => 'instant auto-reload (no octane:reload needed)',
+            'frankenphp-dev' => 'FrankenPHP php-server (instant dev reload)',
+            'artisan-serve' => 'artisan serve (instant dev reload)',
             default => 'prod',
         };
 

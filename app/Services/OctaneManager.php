@@ -69,8 +69,8 @@ class OctaneManager
     }
 
     /**
-     * Spawn a detached Laravel Octane (FrankenPHP) worker without waiting for TCP readiness yet,
-     * allowing callers to overlap Caddy/Vite/DB setup in parallel.
+     * Spawn a detached Laravel app server (Octane if installed, otherwise FrankenPHP php-server
+     * or `php artisan serve`) without waiting for TCP readiness yet.
      *
      * @return array{port: int, pid: int, pgid: int, log: string, reload_strategy: string}
      */
@@ -79,11 +79,16 @@ class OctaneManager
         $this->paths->ensureDirectories();
         $logFile = $this->paths->logFile($slug);
 
-        [$artisanFlags, $strategy] = self::buildOctaneFlags($worktreePath, $port, $devMode);
+        [$serverCmd, $strategy] = self::buildServerCommand(
+            worktreePath: $worktreePath,
+            port: $port,
+            devMode: $devMode,
+            frankenPhpBin: $this->findFrankenPhpBinary(),
+        );
 
         $command = sprintf(
-            'setsid php artisan octane:start %s > %s 2>&1 < /dev/null & echo $!',
-            $artisanFlags,
+            'setsid %s > %s 2>&1 < /dev/null & echo $!',
+            $serverCmd,
             escapeshellarg($logFile)
         );
 
@@ -91,17 +96,17 @@ class OctaneManager
 
         if (! $result->successful()) {
             $error = trim($result->errorOutput()) ?: trim($result->output());
-            throw new RuntimeException("Failed to start Octane worker: {$error}");
+            throw new RuntimeException("Failed to start app server: {$error}");
         }
 
         $pid = (int) trim($result->output());
         if ($pid <= 0) {
             throw new RuntimeException(
-                sprintf('Octane launch did not return a valid PID. Output: %s', trim($result->output()))
+                sprintf('App server launch did not return a valid PID. Output: %s', trim($result->output()))
             );
         }
 
-        $pgid = function_exists('posix_getpgid') ? (posix_getpgid($pid) ?: $pid) : $pid;
+        $pgid = self::resolveChildPgid($pid);
 
         return [
             'port' => $port,
@@ -113,7 +118,7 @@ class OctaneManager
     }
 
     /**
-     * Launch a detached Laravel Octane (FrankenPHP) worker and wait until it accepts TCP connections.
+     * Launch a detached Laravel app server and wait until it accepts TCP connections.
      *
      * @return array{port: int, pid: int, pgid: int}
      */
@@ -126,6 +131,48 @@ class OctaneManager
             'port' => $spawned['port'],
             'pid' => $spawned['pid'],
             'pgid' => $spawned['pgid'],
+        ];
+    }
+
+    /**
+     * Build the app server command:
+     *  1. `php artisan octane:start` when laravel/octane (or custom octane:start) is present
+     *  2. `CADDY_ADMIN=off frankenphp php-server` when standalone FrankenPHP is installed
+     *  3. `php artisan serve` fallback
+     *
+     * @return array{0: string, 1: string}
+     */
+    public static function buildServerCommand(
+        string $worktreePath,
+        int $port,
+        bool $devMode = true,
+        ?string $frankenPhpBin = null,
+    ): array {
+        $root = rtrim($worktreePath, '/');
+        $consolePath = $root.'/routes/console.php';
+        $hasOctane = is_dir($root.'/vendor/laravel/octane')
+            || (is_file($consolePath) && str_contains((string) file_get_contents($consolePath), 'octane:start'));
+
+        if ($hasOctane) {
+            [$flags, $strategy] = self::buildOctaneFlags($root, $port, $devMode);
+
+            return ['php artisan octane:start '.$flags, $strategy];
+        }
+
+        if ($frankenPhpBin !== null && $frankenPhpBin !== '') {
+            $cmd = sprintf(
+                'env CADDY_ADMIN=off %s php-server --listen 127.0.0.1:%d --root %s',
+                escapeshellarg($frankenPhpBin),
+                $port,
+                escapeshellarg($root.'/public')
+            );
+
+            return [$cmd, 'frankenphp-dev'];
+        }
+
+        return [
+            sprintf('php artisan serve --host=127.0.0.1 --port=%d --no-reload', $port),
+            'artisan-serve',
         ];
     }
 
@@ -158,8 +205,45 @@ class OctaneManager
         ];
     }
 
+    public function findFrankenPhpBinary(): ?string
+    {
+        foreach (['/usr/local/bin/frankenphp', '/usr/bin/frankenphp'] as $candidate) {
+            if (is_file($candidate) && is_executable($candidate)) {
+                return $candidate;
+            }
+        }
+
+        $which = Process::run(['which', 'frankenphp']);
+        if ($which->successful() && trim($which->output()) !== '') {
+            return trim($which->output());
+        }
+
+        return null;
+    }
+
     /**
-     * Terminate a detached worker process group (SIGTERM with 2s grace, then SIGKILL).
+     * Resolve a safe child PGID that is never equal to the caller's own process group.
+     */
+    public static function resolveChildPgid(int $pid): int
+    {
+        if ($pid <= 0 || ! function_exists('posix_getpgid')) {
+            return $pid;
+        }
+
+        $myPid = getmypid() ?: 0;
+        $myPgid = $myPid > 0 ? (posix_getpgid($myPid) ?: 0) : 0;
+        $childPgid = posix_getpgid($pid);
+
+        if ($childPgid === false || $childPgid <= 0 || $childPgid === $myPgid) {
+            return $pid;
+        }
+
+        return $childPgid;
+    }
+
+    /**
+     * Terminate a detached worker process group (SIGTERM with 2s grace, then SIGKILL),
+     * ensuring we never signal our own process or process group.
      */
     public function stop(int $pid, int $pgid): void
     {
@@ -167,24 +251,29 @@ class OctaneManager
             return;
         }
 
-        $target = $pgid > 0 ? -$pgid : $pid;
-        if ($target === 0) {
+        $myPid = getmypid() ?: 0;
+        $myPgid = ($myPid > 0 && function_exists('posix_getpgid')) ? (posix_getpgid($myPid) ?: 0) : 0;
+
+        $useGroup = $pgid > 0 && $pgid !== $myPgid && $pgid !== $myPid;
+        $target = $useGroup ? -$pgid : $pid;
+
+        if ($target === 0 || $target === $myPid) {
             return;
         }
 
-        if (! @posix_kill($target, 0) && ($pid <= 0 || ! @posix_kill($pid, 0))) {
+        if (! @posix_kill($target, 0) && ($pid <= 0 || $pid === $myPid || ! @posix_kill($pid, 0))) {
             return;
         }
 
         @posix_kill($target, SIGTERM);
-        if ($pid > 0) {
+        if ($pid > 0 && $pid !== $myPid) {
             @posix_kill($pid, SIGTERM);
         }
 
         $deadline = hrtime(true) + 2_000_000_000;
         while (hrtime(true) < $deadline) {
-            $groupAlive = @posix_kill($target, 0);
-            $pidAlive = $pid > 0 && @posix_kill($pid, 0);
+            $groupAlive = $useGroup && @posix_kill($target, 0);
+            $pidAlive = $pid > 0 && $pid !== $myPid && @posix_kill($pid, 0);
 
             if (! $groupAlive && ! $pidAlive) {
                 return;
@@ -194,7 +283,7 @@ class OctaneManager
         }
 
         @posix_kill($target, SIGKILL);
-        if ($pid > 0) {
+        if ($pid > 0 && $pid !== $myPid) {
             @posix_kill($pid, SIGKILL);
         }
     }
@@ -226,7 +315,7 @@ class OctaneManager
             if (! $this->isAlive($pid)) {
                 $tail = $this->readLogTail($logFile);
                 throw new RuntimeException(
-                    "Octane worker exited prematurely (PID {$pid}) on port {$port}".($tail !== '' ? ":\n{$tail}" : '.')
+                    "App server exited prematurely (PID {$pid}) on port {$port}".($tail !== '' ? ":\n{$tail}" : '.')
                 );
             }
 
@@ -237,7 +326,7 @@ class OctaneManager
         $tail = $this->readLogTail($logFile);
 
         throw new RuntimeException(
-            "Timed out waiting for Octane worker on 127.0.0.1:{$port} (PID {$pid})".($tail !== '' ? ":\n{$tail}" : '.')
+            "Timed out waiting for app server on 127.0.0.1:{$port} (PID {$pid})".($tail !== '' ? ":\n{$tail}" : '.')
         );
     }
 

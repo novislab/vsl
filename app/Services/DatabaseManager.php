@@ -109,7 +109,7 @@ class DatabaseManager
         }
 
         $pid = (int) trim($result->output());
-        $pgid = $pid > 0 && function_exists('posix_getpgid') ? (posix_getpgid($pid) ?: $pid) : $pid;
+        $pgid = OctaneManager::resolveChildPgid($pid);
 
         return [
             'pid' => $pid,
@@ -156,7 +156,7 @@ class DatabaseManager
         }
 
         $pid = (int) trim($result->output());
-        $pgid = $pid > 0 && function_exists('posix_getpgid') ? (posix_getpgid($pid) ?: $pid) : $pid;
+        $pgid = OctaneManager::resolveChildPgid($pid);
 
         return [
             'pid' => $pid,

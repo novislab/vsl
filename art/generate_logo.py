@@ -102,10 +102,10 @@ def branch_svg_path() -> str:
 def theme_palette(theme: str) -> dict[str, str]:
     if theme == "dark":
         return {
-            "portal1": "#F8FAFC",
-            "portal2": "#CBD5E1",
-            "trunk1": "#64748B",
-            "trunk2": "#94A3B8",
+            "portal1": "#FFFFFF",
+            "portal2": "#C7D2FE",
+            "trunk1": "#6366F1",
+            "trunk2": "#A78BFA",
             "branch1": "#10B981",
             "branch2": "#22D3EE",
             "beacon1": "#34D399",
@@ -114,9 +114,9 @@ def theme_palette(theme: str) -> dict[str, str]:
         }
     return {
         "portal1": "#0F172A",
-        "portal2": "#334155",
-        "trunk1": "#64748B",
-        "trunk2": "#475569",
+        "portal2": "#312E81",
+        "trunk1": "#4F46E5",
+        "trunk2": "#7C3AED",
         "branch1": "#059669",
         "branch2": "#0284C7",
         "beacon1": "#10B981",
@@ -235,23 +235,29 @@ def write_svgs() -> list[Path]:
         f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
   <defs>
     <linearGradient id="bg-squircle" x1="40" y1="20" x2="472" y2="492" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#131C2E"/>
-      <stop offset="100%" stop-color="#070B14"/>
+      <stop offset="0%" stop-color="#1E1B4B"/>
+      <stop offset="52%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#060B16"/>
     </linearGradient>
-    <radialGradient id="bg-glow" cx="380" cy="130" r="260" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#10B981" stop-opacity="0.22"/>
-      <stop offset="60%" stop-color="#06B6D4" stop-opacity="0.06"/>
-      <stop offset="100%" stop-color="#070B14" stop-opacity="0"/>
+    <radialGradient id="bg-glow" cx="380" cy="130" r="270" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22D3EE" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#10B981" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#060B16" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bg-glow-bl" cx="120" cy="400" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.26"/>
+      <stop offset="100%" stop-color="#060B16" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="rim" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.18"/>
-      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.04"/>
-      <stop offset="100%" stop-color="#10B981" stop-opacity="0.22"/>
+      <stop offset="0%" stop-color="#A5B4FC" stop-opacity="0.34"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0.34"/>
     </linearGradient>
     {defs_i}
   </defs>
   <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg-squircle)"/>
   <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg-glow)"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg-glow-bl)"/>
   <rect x="17.5" y="17.5" width="477" height="477" rx="110.5" stroke="url(#rim)" stroke-width="3"/>
   <g transform="translate(256 256) scale(0.78) translate(-256 -256)">
     {group_i}
@@ -266,17 +272,51 @@ def write_svgs() -> list[Path]:
     p4 = OUT_DIR / "vsl-lockup.svg"
     p4.write_text(
         f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 260" width="920" height="260" fill="none">
-  <defs>{defs_h}</defs>
-  <rect width="920" height="260" rx="28" fill="#090D16"/>
+  <defs>
+    <linearGradient id="lockup-bg" x1="0" y1="0" x2="920" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E1B4B"/>
+      <stop offset="50%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#060B16"/>
+    </linearGradient>
+    <radialGradient id="lockup-glow" cx="190" cy="70" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22D3EE" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#060B16" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="lockup-glow-r" cx="820" cy="210" r="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#060B16" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="lockup-rim" x1="0" y1="0" x2="920" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#A5B4FC" stop-opacity="0.28"/>
+      <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0.28"/>
+    </linearGradient>
+    <linearGradient id="lockup-text" x1="282" y1="60" x2="460" y2="160" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#C7D2FE"/>
+    </linearGradient>
+    <linearGradient id="lockup-sub" x1="288" y1="186" x2="620" y2="186" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    {defs_h}
+  </defs>
+  <rect width="920" height="260" rx="28" fill="url(#lockup-bg)"/>
+  <rect width="920" height="260" rx="28" fill="url(#lockup-glow)"/>
+  <rect width="920" height="260" rx="28" fill="url(#lockup-glow-r)"/>
+  <rect x="1.5" y="1.5" width="917" height="257" rx="26.5" stroke="url(#lockup-rim)" stroke-width="3"/>
   <g transform="translate(36 22) scale(0.422)">
     {group_h}
   </g>
-  <text x="282" y="148"
+  <text x="282" y="144"
         font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-        font-size="112" font-weight="800" letter-spacing="-3" fill="#F8FAFC">vsl</text>
+        font-size="112" font-weight="800" letter-spacing="-3" fill="url(#lockup-text)">vsl</text>
   <text x="288" y="186"
         font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
-        font-size="20" font-weight="600" letter-spacing="5.5" fill="#34D399">WORKTREE PREVIEW</text>
+        font-size="20" font-weight="700" letter-spacing="5.5" fill="url(#lockup-sub)">WORKTREE PREVIEW</text>
+  <text x="288" y="218"
+        font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+        font-size="15" font-weight="500" letter-spacing="0.4" fill="#94A3B8">Instant HTTPS previews · Octane + Bun Vite HMR + Isolated DBs</text>
 </svg>
 ''',
         encoding="utf-8",
@@ -423,7 +463,9 @@ def render_png(path: Path, size: int = 1024, with_squircle_bg: bool = False, the
     c_trunk1, c_trunk2 = hex_to_rgb(pal["trunk1"]), hex_to_rgb(pal["trunk2"])
     c_branch1, c_branch2 = hex_to_rgb(pal["branch1"]), hex_to_rgb(pal["branch2"])
     c_beacon1, c_beacon2 = hex_to_rgb(pal["beacon1"]), hex_to_rgb(pal["beacon2"])
-    c_bg1, c_bg2 = hex_to_rgb("#131C2E"), hex_to_rgb("#070B14")
+    c_bg1, c_bg2 = hex_to_rgb("#1E1B4B"), hex_to_rgb("#060B16")
+    c_indigo_glow = hex_to_rgb("#6366F1")
+    c_cyan_glow = hex_to_rgb("#22D3EE")
     c_white = (1.0, 1.0, 1.0)
 
     scale = 512.0 / size
@@ -454,13 +496,18 @@ def render_png(path: Path, size: int = 1024, with_squircle_bg: bool = False, the
                     continue
                 bg_rgb = grad_line(cx, cy, 40.0, 20.0, 472.0, 492.0, c_bg1, c_bg2)
                 dist_glow = math.hypot(cx - 380.0, cy - 130.0)
-                if dist_glow < 260.0:
-                    glow_t = (1.0 - smoothstep(0.0, 260.0, dist_glow)) * 0.20
-                    bg_rgb = lerp_rgb(bg_rgb, c_branch1, glow_t)
+                if dist_glow < 270.0:
+                    glow_t = (1.0 - smoothstep(0.0, 270.0, dist_glow)) * 0.26
+                    bg_rgb = lerp_rgb(bg_rgb, c_cyan_glow, glow_t)
+                dist_glow_bl = math.hypot(cx - 120.0, cy - 400.0)
+                if dist_glow_bl < 240.0:
+                    glow_bl_t = (1.0 - smoothstep(0.0, 240.0, dist_glow_bl)) * 0.24
+                    bg_rgb = lerp_rgb(bg_rgb, c_indigo_glow, glow_bl_t)
                 d_rim = abs(d_bg + 1.5) - 1.5
                 if d_rim < aa:
-                    rim_a = clamp(0.5 - d_rim / aa) * 0.16
-                    bg_rgb = lerp_rgb(bg_rgb, c_white, rim_a)
+                    rim_a = clamp(0.5 - d_rim / aa) * 0.28
+                    rim_col = grad_line(cx, cy, 0.0, 0.0, 512.0, 512.0, c_indigo_glow, c_cyan_glow)
+                    bg_rgb = lerp_rgb(bg_rgb, rim_col, rim_a)
                 rgb, alpha = bg_rgb, bg_a
 
             px = (cx - 256.0) / emblem_scale + 256.0

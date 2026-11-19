@@ -2,11 +2,11 @@
   <defs>
     <linearGradient id="vsl-light-portal" x1="80" y1="420" x2="360" y2="120" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#0F172A"/>
-      <stop offset="100%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#312E81"/>
     </linearGradient>
     <linearGradient id="vsl-light-trunk" x1="180" y1="346" x2="180" y2="220" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#64748B"/>
-      <stop offset="100%" stop-color="#475569"/>
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
     </linearGradient>
     <linearGradient id="vsl-light-branch" x1="180" y1="346" x2="360" y2="136" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#059669"/>

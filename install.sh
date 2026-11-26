@@ -50,21 +50,29 @@ esac
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-RELEASE_URL="https://github.com/${VSL_REPO}/releases/latest/download/vsl-linux-${ARCH}"
+RELEASE_BASE="https://github.com/${VSL_REPO}/releases/latest/download"
+INSTALLED_FROM_RELEASE=0
 
-log "Checking for prebuilt binary (${RELEASE_URL})..."
-if command -v curl >/dev/null 2>&1 && curl -fsSL -o "${TMP_DIR}/vsl" "$RELEASE_URL" 2>/dev/null; then
-  chmod +x "${TMP_DIR}/vsl"
-  if "${TMP_DIR}/vsl" --version >/dev/null 2>&1; then
-    log "Installing prebuilt vsl binary to ${VSL_BIN}..."
-    install_binary "${TMP_DIR}/vsl"
-  else
-    warn "Downloaded release binary failed verification; falling back to PHAR source build."
-    rm -f "${TMP_DIR}/vsl"
-  fi
+if command -v curl >/dev/null 2>&1; then
+  for ASSET in "vsl" "vsl-linux-${ARCH}"; do
+    RELEASE_URL="${RELEASE_BASE}/${ASSET}"
+    log "Checking for prebuilt release (${RELEASE_URL})..."
+    if curl -fsSL -o "${TMP_DIR}/vsl" "$RELEASE_URL" 2>/dev/null; then
+      chmod +x "${TMP_DIR}/vsl"
+      if "${TMP_DIR}/vsl" --version >/dev/null 2>&1; then
+        log "Installing prebuilt vsl (${ASSET}) to ${VSL_BIN}..."
+        install_binary "${TMP_DIR}/vsl"
+        INSTALLED_FROM_RELEASE=1
+        break
+      else
+        warn "Downloaded release asset (${ASSET}) failed verification; trying next option."
+        rm -f "${TMP_DIR}/vsl"
+      fi
+    fi
+  done
 fi
 
-if [[ ! -x "$VSL_BIN" ]] || [[ ! -f "${TMP_DIR}/vsl" ]]; then
+if [[ "$INSTALLED_FROM_RELEASE" != "1" ]]; then
   command -v git >/dev/null 2>&1 || die "git is required to install from source."
   command -v php >/dev/null 2>&1 || die "php 8.3+ is required to build vsl PHAR."
   command -v composer >/dev/null 2>&1 || die "composer is required to build vsl PHAR."

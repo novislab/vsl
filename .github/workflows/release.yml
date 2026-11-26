@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+jobs:
+  build-phar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, posix, pcntl, pdo, pdo_mysql, pdo_pgsql, pdo_sqlite
+          tools: composer:v2
+
+      - name: Install production dependencies
+        run: composer install --no-dev --optimize-autoloader --no-interaction
+
+      - name: Build vsl PHAR
+        env:
+          TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          php vsl app:build vsl --build-version="${VERSION}" --no-interaction
+          chmod +x builds/vsl
+          ./builds/vsl --version
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" builds/vsl --clobber
+          else
+            gh release create "${TAG_NAME}" builds/vsl --title "${TAG_NAME}" --generate-notes
+          fi

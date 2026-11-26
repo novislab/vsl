@@ -6,7 +6,7 @@ use chillerlan\QRCode\QRCode;
 use chillerlan\QRCode\QROptions;
 
 it('renders a compact high-contrast half-block QR code with a 2-module quiet zone', function () {
-    $ansiQr = HalfBlockQrOutput::forUrl('https://feat-x.203-0-113-10.sslip.io');
+    $ansiQr = HalfBlockQrOutput::forUrl('https://feat-x.test');
 
     expect($ansiQr)
         ->toContain("\x1b[30;107m")
@@ -15,7 +15,7 @@ it('renders a compact high-contrast half-block QR code with a 2-module quiet zon
         ->toContain('▀')
         ->toContain('▄');
 
-    $plainQr = HalfBlockQrOutput::forUrl('https://feat-x.203-0-113-10.sslip.io', ansi: false);
+    $plainQr = HalfBlockQrOutput::forUrl('https://feat-x.test', ansi: false);
     $lines = explode("\n", $plainQr);
 
     // Strip the 2-space left margin; first line is the 2-module top quiet zone (all spaces)

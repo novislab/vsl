@@ -4,14 +4,13 @@ namespace App\Commands;
 
 use App\Commands\Concerns\InteractsWithVslUi;
 use App\Data\WorktreeState;
-use App\Services\CaddyClient;
 use App\Services\DatabaseManager;
 use App\Services\GitInspector;
-use App\Services\IpResolver;
-use App\Services\OctaneManager;
+use App\Services\ProcessManager;
 use App\Services\StateStore;
 use App\Services\ViteManager;
 use App\Services\WorkspaceHydrator;
+use App\Services\YerdClient;
 use App\Support\HalfBlockQrOutput;
 use LaravelZero\Framework\Commands\Command;
 use Throwable;
@@ -31,19 +30,19 @@ class UpCommand extends Command
         {--no-db : Skip isolated database creation, migration, and seeding}
         {--no-seed : Run migrations without seeding}
         {--no-vite : Skip starting bun dev / Vite HMR server}
-        {--prod : Disable dev auto-reload flags (--watch / --max-requests=1)}
+        {--no-https : Serve the Yerd .test site over HTTP instead of HTTPS}
+        {--php= : Pin a specific PHP version in Yerd (defaults to parent site PHP version or Yerd global default)}
         {--json : Output result as JSON}';
 
-    protected $description = 'Hydrate a Git worktree, start Octane + bun dev in parallel, and expose an HTTPS sslip.io preview URL';
+    protected $description = 'Hydrate a Git worktree, link & secure a local Yerd .test site, and start Vite HMR + isolated DB in the background';
 
     public function handle(
         GitInspector $gitInspector,
-        IpResolver $ipResolver,
+        YerdClient $yerd,
         WorkspaceHydrator $hydrator,
         DatabaseManager $databaseManager,
         ViteManager $viteManager,
-        OctaneManager $octane,
-        CaddyClient $caddy,
+        ProcessManager $processManager,
         StateStore $stateStore,
     ): int {
         $this->startTimer();
@@ -52,30 +51,31 @@ class UpCommand extends Command
 
         $targetPath = (string) ($this->option('path') ?: getcwd());
 
-        intro('VSL · Worktree Preview Up');
+        intro('VSL · Worktree Preview Up (Yerd)');
 
-        $spawnedOctane = null;
         $viteJob = null;
+        $dbJob = null;
+        $registeredSlug = null;
+        $viteProxyPaths = [];
 
         try {
             $info = $gitInspector->inspect($targetPath);
-            $preview = $ipResolver->buildPreviewUrl($info->slug);
+            $secure = ! $this->option('no-https');
+            $preview = $yerd->buildPreviewUrl($info->slug, $secure);
             $domain = $preview['domain'];
             $url = $preview['url'];
-            $devMode = ! $this->option('prod');
 
             $allStates = $stateStore->all();
 
-            // Idempotency: tear down any existing worker/vite/db/route for this slug first
+            // Idempotency: tear down any existing Vite/DB/Yerd site for this slug first
             if (isset($allStates[$info->slug])) {
                 $existing = $allStates[$info->slug];
-                $this->spinStep("Replacing existing preview for {$info->slug}...", function () use ($existing, $octane, $viteManager, $caddy, $stateStore): void {
+                $this->spinStep("Replacing existing preview for {$info->slug}...", function () use ($existing, $processManager, $viteManager, $yerd, $stateStore): void {
                     if ($existing->db_pid !== null && $existing->db_pid > 0) {
-                        $octane->stop($existing->db_pid, $existing->db_pgid ?: $existing->db_pid);
+                        $processManager->stop($existing->db_pid, $existing->db_pgid ?: $existing->db_pid);
                     }
-                    $viteManager->cleanup($existing->path, $existing->slug, $existing->vite_pid, $existing->vite_pgid, $octane);
-                    $octane->stop($existing->pid, $existing->pgid);
-                    $caddy->deleteRoute($existing->slug);
+                    $viteManager->cleanup($existing->path, $existing->slug, $existing->vite_pid, $existing->vite_pgid, $processManager);
+                    $yerd->unregisterSite($existing->slug, $existing->vite_proxy_paths);
                     $stateStore->remove($existing->slug);
                 }, $json);
 
@@ -91,7 +91,6 @@ class UpCommand extends Command
                 }
             }, $json);
 
-            $reservedOctanePorts = array_values(array_map(static fn (WorktreeState $s): int => $s->port, $allStates));
             $reservedVitePorts = [];
             foreach ($allStates as $s) {
                 if ($s->vite_port !== null) {
@@ -99,33 +98,34 @@ class UpCommand extends Command
                 }
             }
 
-            $octanePort = $octane->allocatePort($reservedOctanePorts);
+            $phpOption = $this->option('php');
+            $phpVersion = is_string($phpOption) && trim($phpOption) !== ''
+                ? trim($phpOption)
+                : $yerd->detectParentPhpVersion($info->parentPath);
 
-            // Launch Octane, Vite (bun dev), DB provision, and Caddy registration concurrently!
-            $spawnedOctane = $this->spinStep("Starting Octane + Vite HMR & registering {$domain}...", function () use (
-                $octane,
+            // Start Vite HMR, dispatch DB provision, and link + secure the .test site in Yerd
+            $this->spinStep("Linking {$domain} in Yerd & starting background workers...", function () use (
+                $yerd,
                 $viteManager,
                 $databaseManager,
-                $caddy,
                 $info,
                 $domain,
-                $octanePort,
+                $secure,
+                $phpVersion,
                 $reservedVitePorts,
-                $devMode,
                 $dbConfig,
-                &$viteJob
-            ): array {
-                // 1. Spawn Octane asynchronously (don't wait on TCP socket yet)
-                $spawned = $octane->spawnDetached($info->worktreePath, $info->slug, $octanePort, $devMode);
-
-                // 2. Spawn bun dev (Vite HMR) out of terminal if configured
+                &$viteJob,
+                &$dbJob,
+                &$registeredSlug,
+                &$viteProxyPaths,
+            ): void {
+                // 1. Spawn bun dev (Vite HMR) out of terminal if configured
                 if (! $this->option('no-vite') && $viteManager->detectConfig($info->worktreePath) !== null) {
                     $vitePort = $viteManager->allocatePort($reservedVitePorts);
-                    $viteJob = $viteManager->dispatch($info->worktreePath, $info->slug, $domain, $vitePort);
+                    $viteJob = $viteManager->dispatch($info->worktreePath, $info->slug, $domain, $vitePort, $secure);
                 }
 
-                // 3. Spawn background DB create + migrate + seed out of terminal
-                $dbJob = null;
+                // 2. Spawn background DB create + migrate + seed out of terminal
                 if ($dbConfig !== null) {
                     $dbJob = $databaseManager->dispatchProvision(
                         worktreePath: $info->worktreePath,
@@ -134,37 +134,29 @@ class UpCommand extends Command
                     );
                 }
 
-                // 4. Register Caddy HTTPS + Vite HMR proxy routes while processes boot in parallel
-                $caddy->registerRoute(
+                // 3. Link, pin PHP version, secure, and attach Vite path proxies in Yerd
+                $viteProxyPaths = $yerd->registerSite(
                     slug: $info->slug,
-                    domain: $domain,
-                    port: $spawned['port'],
+                    worktreePath: $info->worktreePath,
+                    secure: $secure,
+                    phpVersion: $phpVersion,
                     vitePort: $viteJob['port'] ?? null,
                     vitePaths: $viteJob['customPaths'] ?? [],
                     hmrPath: $viteJob['hmrPath'] ?? null,
                 );
-
-                // 5. Wait for Octane TCP port (10ms polling; typically already open by now)
-                $octane->waitUntilListening($spawned['port'], $spawned['pid'], $spawned['pgid'], $spawned['log']);
-
-                $spawned['db_job'] = $dbJob;
-
-                return $spawned;
+                $registeredSlug = $info->slug;
             }, $json);
-
-            $dbJob = $spawnedOctane['db_job'] ?? null;
 
             $state = new WorktreeState(
                 slug: $info->slug,
                 branch: $info->branch,
                 domain: $domain,
                 url: $url,
-                port: $spawnedOctane['port'],
-                pid: $spawnedOctane['pid'],
-                pgid: $spawnedOctane['pgid'],
                 path: $info->worktreePath,
                 parent_path: $info->parentPath,
                 created_at: gmdate('c'),
+                secure: $secure,
+                php_version: $phpVersion,
                 db_connection: $dbConfig['connection'] ?? null,
                 db_name: $dbConfig['database'] ?? null,
                 db_pid: $dbJob['pid'] ?? null,
@@ -172,15 +164,20 @@ class UpCommand extends Command
                 vite_port: $viteJob['port'] ?? null,
                 vite_pid: $viteJob['pid'] ?? null,
                 vite_pgid: $viteJob['pgid'] ?? null,
+                vite_proxy_paths: $viteProxyPaths,
             );
 
             $stateStore->put($state);
         } catch (Throwable $e) {
-            if ($spawnedOctane !== null) {
-                $octane->stop($spawnedOctane['pid'], $spawnedOctane['pgid']);
-            }
             if ($viteJob !== null) {
-                $octane->stop($viteJob['pid'], $viteJob['pgid']);
+                $processManager->stop($viteJob['pid'], $viteJob['pgid']);
+            }
+            if ($registeredSlug !== null) {
+                try {
+                    $yerd->unregisterSite($registeredSlug, $viteProxyPaths);
+                } catch (Throwable) {
+                    // Best-effort rollback
+                }
             }
 
             if ($json) {
@@ -196,7 +193,6 @@ class UpCommand extends Command
 
         if ($json) {
             $payload = array_merge($state->toArray(), [
-                'reload_strategy' => $spawnedOctane['reload_strategy'] ?? 'watch',
                 'elapsed' => $elapsed,
                 'ready_in' => $elapsed,
             ]);
@@ -210,23 +206,21 @@ class UpCommand extends Command
             $this->output->writeln(HalfBlockQrOutput::forUrl($state->url));
         }
 
-        $reloadLabel = match ($spawnedOctane['reload_strategy'] ?? 'stateless-dev') {
-            'watch' => 'live --watch',
-            'stateless-dev' => 'instant auto-reload (no octane:reload needed)',
-            'frankenphp-dev' => 'FrankenPHP php-server (instant dev reload)',
-            'artisan-serve' => 'artisan serve (instant dev reload)',
-            default => 'prod',
-        };
+        $yerdSummary = $state->secure ? 'linked · HTTPS (trusted CA)' : 'linked · HTTP';
+        if ($state->php_version !== null) {
+            $yerdSummary .= " · PHP {$state->php_version}";
+        }
 
         $details = [
             "URL:     {$state->url}",
             "Branch:  {$state->branch}",
             "Slug:    {$state->slug}",
-            "Octane:  127.0.0.1:{$state->port} · PID {$state->pid} ({$reloadLabel})",
+            "Yerd:    {$yerdSummary}",
         ];
 
         if ($state->vite_port !== null) {
-            $details[] = "Vite:    127.0.0.1:{$state->vite_port} · PID {$state->vite_pid} (bun dev + wss:// HMR in background)";
+            $hmrProto = $state->secure ? 'wss://' : 'ws://';
+            $details[] = "Vite:    127.0.0.1:{$state->vite_port} · PID {$state->vite_pid} (bun dev + {$hmrProto} HMR via Yerd proxy)";
         }
 
         if ($state->db_name !== null) {
@@ -234,7 +228,7 @@ class UpCommand extends Command
             $details[] = "DB:      {$state->db_name} ({$state->db_connection} · {$seedLabel} in background)";
         }
 
-        $details[] = 'Reboot:  Persisted in ~/.vsl/state.json (auto-restored via vsl resurrect)';
+        $details[] = 'State:   Persisted in ~/.vsl/state.json (restorable via vsl resurrect)';
 
         note(implode("\n", $details));
 

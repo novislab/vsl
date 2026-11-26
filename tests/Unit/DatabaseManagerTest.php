@@ -119,11 +119,8 @@ it('dispatches detached background provision and teardown jobs without blocking'
         $state = new WorktreeState(
             slug: 'feat-bg',
             branch: 'feat/bg',
-            domain: 'feat-bg.1-2-3-4.sslip.io',
-            url: 'https://feat-bg.1-2-3-4.sslip.io',
-            port: 9100,
-            pid: 1111,
-            pgid: 1111,
+            domain: 'feat-bg.test',
+            url: 'https://feat-bg.test',
             path: $base.'/wt',
             parent_path: $base.'/parent',
             created_at: '2026-11-19T14:00:00+00:00',

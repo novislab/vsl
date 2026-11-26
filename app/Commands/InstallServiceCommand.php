@@ -22,7 +22,7 @@ class InstallServiceCommand extends Command
         {--binary= : Path to the vsl binary (defaults to /usr/local/bin/vsl)}
         {--dry-run : Render the systemd unit file without installing or enabling it}';
 
-    protected $description = 'Install and enable the systemd vsl-resurrect service for EC2 reboot persistence';
+    protected $description = 'Install and enable the systemd vsl-resurrect service for reboot persistence';
 
     public function handle(): int
     {
@@ -70,7 +70,7 @@ class InstallServiceCommand extends Command
             return self::FAILURE;
         }
 
-        $enable = Process::run(array_merge($prefix, ['systemctl', 'enable', 'caddy.service', 'vsl-resurrect.service']));
+        $enable = Process::run(array_merge($prefix, ['systemctl', 'enable', 'vsl-resurrect.service']));
         if (! $enable->successful()) {
             $err = trim($enable->errorOutput()) ?: trim($enable->output());
             error("systemctl enable failed: {$err}");
@@ -82,7 +82,7 @@ class InstallServiceCommand extends Command
             'Unit:     '.self::UNIT_PATH,
             "User:     {$user}",
             "Binary:   {$binary}",
-            'Enabled:  caddy.service, vsl-resurrect.service',
+            'Enabled:  vsl-resurrect.service',
         ]));
 
         outro('Reboot persistence installed and enabled.');
@@ -97,8 +97,8 @@ class InstallServiceCommand extends Command
         return <<<INI
 [Unit]
 Description=VSL Worktree Preview Resurrect Service
-After=network-online.target caddy.service
-Wants=network-online.target caddy.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot

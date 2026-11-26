@@ -4,12 +4,12 @@ use App\Commands\Concerns\InteractsWithVslUi;
 use App\Commands\InstallServiceCommand;
 use App\Data\WorktreeState;
 use App\Services\DatabaseManager;
-use App\Services\IpResolver;
-use App\Services\OctaneManager;
+use App\Services\ProcessManager;
 use App\Services\StateStore;
+use App\Services\ViteManager;
+use App\Services\YerdClient;
 use App\Support\VslPaths;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Mockery\MockInterface;
 
@@ -19,7 +19,7 @@ it('formats elapsed time in ms under 1s and seconds at or above 1s', function ()
         ->and(InteractsWithVslUi::formatElapsedNs(1_240_000_000))->toBe('1.24s');
 });
 
-it('runs vsl up, persists state, renders QR/URL, and tears down cleanly with vsl down', function () {
+it('runs vsl up with Yerd .test, persists state, renders QR/URL, and tears down cleanly with vsl down', function () {
     $base = sys_get_temp_dir().'/vsl-feat-'.uniqid('', true);
     $vslHome = $base.'/vsl-home';
     $mainRepo = $base.'/repo';
@@ -49,28 +49,29 @@ it('runs vsl up, persists state, renders QR/URL, and tears down cleanly with vsl
     $paths = new VslPaths($vslHome);
     $this->app->instance(VslPaths::class, $paths);
     $this->app->instance(StateStore::class, new StateStore($paths));
-    $this->app->instance(IpResolver::class, new IpResolver($paths));
 
-    $_ENV['VSL_PUBLIC_IP'] = '34.210.12.99';
-
-    Http::fake([
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0' => Http::response(['listen' => [':80', ':443']], 200),
-        'http://127.0.0.1:2019/id/vsl-feat-qr-preview' => Http::response([], 404),
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0/routes' => Http::response([], 200),
-    ]);
-
-    $this->mock(OctaneManager::class, function (MockInterface $mock): void {
-        $mock->shouldReceive('allocatePort')->once()->andReturn(9105);
-        $mock->shouldReceive('spawnDetached')->once()->andReturn([
-            'port' => 9105,
-            'pid' => 77889,
-            'pgid' => 77889,
-            'log' => '/tmp/feat-qr-preview.log',
-            'reload_strategy' => 'stateless-dev',
-        ]);
-        $mock->shouldReceive('waitUntilListening')->once()->with(9105, 77889, 77889, '/tmp/feat-qr-preview.log');
-        $mock->shouldReceive('stop')->once()->with(77889, 77889);
-        $mock->shouldReceive('isAlive')->andReturn(true);
+    $this->mock(YerdClient::class, function (MockInterface $mock) use ($worktreeDir): void {
+        $mock->shouldReceive('buildPreviewUrl')
+            ->once()
+            ->with('feat-qr-preview', true)
+            ->andReturn([
+                'tld' => 'test',
+                'domain' => 'feat-qr-preview.test',
+                'url' => 'https://feat-qr-preview.test',
+            ]);
+        $mock->shouldReceive('detectParentPhpVersion')->once()->andReturn('8.5');
+        $mock->shouldReceive('registerSite')
+            ->once()
+            ->with('feat-qr-preview', realpath($worktreeDir), true, '8.5', null, [], null)
+            ->andReturn([]);
+        $mock->shouldReceive('listSites')
+            ->once()
+            ->andReturn([
+                'feat-qr-preview' => ['name' => 'feat-qr-preview', 'php' => '8.5', 'secure' => true],
+            ]);
+        $mock->shouldReceive('unregisterSite')
+            ->once()
+            ->with('feat-qr-preview', []);
     });
 
     $this->mock(DatabaseManager::class, function (MockInterface $mock): void {
@@ -82,7 +83,7 @@ it('runs vsl up, persists state, renders QR/URL, and tears down cleanly with vsl
     try {
         // vsl up (with QR output)
         $this->artisan('up', ['--path' => $worktreeDir])
-            ->expectsOutputToContain('https://feat-qr-preview.34-210-12-99.sslip.io')
+            ->expectsOutputToContain('https://feat-qr-preview.test')
             ->expectsOutputToContain('Ready in ')
             ->expectsOutputToContain('█')
             ->assertSuccessful();
@@ -91,11 +92,11 @@ it('runs vsl up, persists state, renders QR/URL, and tears down cleanly with vsl
         $saved = $store->get('feat-qr-preview');
 
         expect($saved)->not->toBeNull()
-            ->and($saved->port)->toBe(9105)
-            ->and($saved->pid)->toBe(77889)
-            ->and($saved->url)->toBe('https://feat-qr-preview.34-210-12-99.sslip.io')
+            ->and($saved->domain)->toBe('feat-qr-preview.test')
+            ->and($saved->url)->toBe('https://feat-qr-preview.test')
+            ->and($saved->php_version)->toBe('8.5')
             ->and(file_get_contents($worktreeDir.'/.env'))
-            ->toContain('APP_URL=https://feat-qr-preview.34-210-12-99.sslip.io');
+            ->toContain('APP_URL=https://feat-qr-preview.test');
 
         // vsl list --json
         $exitCode = Artisan::call('list', ['--json' => true]);
@@ -103,10 +104,11 @@ it('runs vsl up, persists state, renders QR/URL, and tears down cleanly with vsl
         expect($exitCode)->toBe(0)
             ->and($listJson)->toBeArray()->toHaveCount(1)
             ->and($listJson[0]['slug'])->toBe('feat-qr-preview')
-            ->and($listJson[0]['status'])->toBe('RUNNING');
+            ->and($listJson[0]['status'])->toBe('LINKED');
 
         // vsl down --path
         $this->artisan('down', ['--path' => $worktreeDir])
+            ->expectsOutputToContain('Unlinking feat-qr-preview.test from Yerd')
             ->expectsOutputToContain('Stopped: feat-qr-preview')
             ->expectsOutputToContain('Ready in ')
             ->assertSuccessful();
@@ -120,7 +122,6 @@ it('runs vsl up, persists state, renders QR/URL, and tears down cleanly with vsl
             ->expectsOutputToContain('No active worktree preview found')
             ->assertFailed();
     } finally {
-        unset($_ENV['VSL_PUBLIC_IP']);
         exec('rm -rf '.escapeshellarg($base));
     }
 });
@@ -153,28 +154,20 @@ it('updates .env DB_DATABASE and dispatches background DB provision on up and DB
     $store = new StateStore($paths);
     $this->app->instance(VslPaths::class, $paths);
     $this->app->instance(StateStore::class, $store);
-    $this->app->instance(IpResolver::class, new IpResolver($paths));
 
-    $_ENV['VSL_PUBLIC_IP'] = '198.51.100.20';
-
-    Http::fake([
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0' => Http::response(['listen' => [':80', ':443']], 200),
-        'http://127.0.0.1:2019/id/vsl-*' => Http::response([], 200),
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0/routes' => Http::response([], 200),
-    ]);
-
-    $this->mock(OctaneManager::class, function (MockInterface $mock): void {
-        $mock->shouldReceive('allocatePort')->once()->andReturn(9120);
-        $mock->shouldReceive('spawnDetached')->once()->andReturn([
-            'port' => 9120,
-            'pid' => 70001,
-            'pgid' => 70001,
-            'log' => '/tmp/feat-db-isolation.log',
-            'reload_strategy' => 'stateless-dev',
+    $this->mock(YerdClient::class, function (MockInterface $mock): void {
+        $mock->shouldReceive('buildPreviewUrl')->once()->andReturn([
+            'tld' => 'test',
+            'domain' => 'feat-db-isolation.test',
+            'url' => 'https://feat-db-isolation.test',
         ]);
-        $mock->shouldReceive('waitUntilListening')->once()->with(9120, 70001, 70001, '/tmp/feat-db-isolation.log');
+        $mock->shouldReceive('detectParentPhpVersion')->once()->andReturn(null);
+        $mock->shouldReceive('registerSite')->once()->andReturn([]);
+        $mock->shouldReceive('unregisterSite')->once()->with('feat-db-isolation', []);
+    });
+
+    $this->mock(ProcessManager::class, function (MockInterface $mock): void {
         $mock->shouldReceive('stop')->once()->with(88001, 88001);
-        $mock->shouldReceive('stop')->once()->with(70001, 70001);
         $mock->shouldReceive('isAlive')->andReturn(true);
     });
 
@@ -218,20 +211,19 @@ it('updates .env DB_DATABASE and dispatches background DB provision on up and DB
             ->and($downOut)->toContain('Dropping vsl_feat_db_isolation (mysql) in background')
             ->and($store->get('feat-db-isolation'))->toBeNull();
     } finally {
-        unset($_ENV['VSL_PUBLIC_IP']);
         exec('rm -rf '.escapeshellarg($base));
     }
 });
 
-it('resurrects dead workers, prunes missing directories, and re-registers Caddy routes', function () {
+it('resurrects Yerd sites, restarts dead Vite workers, and prunes missing directories', function () {
     $base = sys_get_temp_dir().'/vsl-resurrect-'.uniqid('', true);
     $vslHome = $base.'/vsl-home';
     $liveDir = $base.'/wt-live';
-    $deadDir = $base.'/wt-dead';
+    $deadViteDir = $base.'/wt-dead-vite';
     $missingDir = $base.'/wt-deleted';
 
     mkdir($liveDir, 0755, true);
-    mkdir($deadDir, 0755, true);
+    mkdir($deadViteDir, 0755, true);
 
     $paths = new VslPaths($vslHome);
     $store = new StateStore($paths);
@@ -239,37 +231,35 @@ it('resurrects dead workers, prunes missing directories, and re-registers Caddy 
     $store->put(new WorktreeState(
         slug: 'wt-live',
         branch: 'feat/live',
-        domain: 'wt-live.1-2-3-4.sslip.io',
-        url: 'https://wt-live.1-2-3-4.sslip.io',
-        port: 9100,
-        pid: 11111,
-        pgid: 11111,
+        domain: 'wt-live.test',
+        url: 'https://wt-live.test',
         path: $liveDir,
         parent_path: $base.'/repo',
         created_at: '2026-11-19T12:00:00+00:00',
+        secure: true,
+        php_version: '8.5',
     ));
 
     $store->put(new WorktreeState(
-        slug: 'wt-dead',
-        branch: 'feat/dead',
-        domain: 'wt-dead.1-2-3-4.sslip.io',
-        url: 'https://wt-dead.1-2-3-4.sslip.io',
-        port: 9101,
-        pid: 22222,
-        pgid: 22222,
-        path: $deadDir,
+        slug: 'wt-dead-vite',
+        branch: 'feat/dead-vite',
+        domain: 'wt-dead-vite.test',
+        url: 'https://wt-dead-vite.test',
+        path: $deadViteDir,
         parent_path: $base.'/repo',
         created_at: '2026-11-19T12:00:00+00:00',
+        secure: true,
+        vite_port: 5173,
+        vite_pid: 22222,
+        vite_pgid: 22222,
+        vite_proxy_paths: ['/@vite'],
     ));
 
     $store->put(new WorktreeState(
         slug: 'wt-deleted',
         branch: 'feat/deleted',
-        domain: 'wt-deleted.1-2-3-4.sslip.io',
-        url: 'https://wt-deleted.1-2-3-4.sslip.io',
-        port: 9102,
-        pid: 33333,
-        pgid: 33333,
+        domain: 'wt-deleted.test',
+        url: 'https://wt-deleted.test',
         path: $missingDir,
         parent_path: $base.'/repo',
         created_at: '2026-11-19T12:00:00+00:00',
@@ -278,21 +268,33 @@ it('resurrects dead workers, prunes missing directories, and re-registers Caddy 
     $this->app->instance(VslPaths::class, $paths);
     $this->app->instance(StateStore::class, $store);
 
-    Http::fake([
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0' => Http::response(['listen' => [':80', ':443']], 200),
-        'http://127.0.0.1:2019/id/vsl-*' => Http::response([], 200),
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0/routes' => Http::response([], 200),
-    ]);
-
-    $this->mock(OctaneManager::class, function (MockInterface $mock) use ($deadDir): void {
-        $mock->shouldReceive('isAlive')->with(11111)->andReturn(true);
+    $this->mock(ProcessManager::class, function (MockInterface $mock): void {
         $mock->shouldReceive('isAlive')->with(22222)->andReturn(false);
-        $mock->shouldReceive('allocatePort')->once()->with([9100], 9101)->andReturn(9101);
-        $mock->shouldReceive('start')->once()->with($deadDir, 'wt-dead', 9101)->andReturn([
-            'port' => 9101,
+    });
+
+    $this->mock(ViteManager::class, function (MockInterface $mock) use ($liveDir, $deadViteDir): void {
+        $mock->shouldReceive('detectConfig')->with($liveDir)->andReturn(null);
+        $mock->shouldReceive('detectConfig')->with($deadViteDir)->andReturn([
+            'configFile' => $deadViteDir.'/vite.config.ts',
+            'isTypeScript' => true,
+            'customPaths' => ['/resources/*'],
+            'hmrPath' => null,
+        ]);
+        $mock->shouldReceive('allocatePort')->once()->with([], 5173)->andReturn(5173);
+        $mock->shouldReceive('dispatch')->once()->with($deadViteDir, 'wt-dead-vite', 'wt-dead-vite.test', 5173, true)->andReturn([
+            'port' => 5173,
             'pid' => 44444,
             'pgid' => 44444,
+            'log' => '/tmp/wt-dead-vite-vite.log',
+            'customPaths' => ['/resources/*'],
+            'hmrPath' => '/__vite_hmr',
         ]);
+    });
+
+    $this->mock(YerdClient::class, function (MockInterface $mock) use ($liveDir, $deadViteDir): void {
+        $mock->shouldReceive('unregisterSite')->once()->with('wt-deleted', []);
+        $mock->shouldReceive('registerSite')->once()->with('wt-live', $liveDir, true, '8.5', null, [], null)->andReturn([]);
+        $mock->shouldReceive('registerSite')->once()->with('wt-dead-vite', $deadViteDir, true, null, 5173, ['/resources/*'], '/__vite_hmr')->andReturn(['/@vite', '/__vite_hmr']);
     });
 
     try {
@@ -300,13 +302,13 @@ it('resurrects dead workers, prunes missing directories, and re-registers Caddy 
         $output = Artisan::output();
 
         expect($exitCode)->toBe(0)
-            ->and($output)->toContain('Restored routes:   2')
-            ->and($output)->toContain('Restarted workers: 1')
+            ->and($output)->toContain('Restored sites:    2')
+            ->and($output)->toContain('Restarted Vite:    1')
             ->and($output)->toContain('Pruned missing:    1')
             ->and($output)->toContain('Ready in ')
             ->and($store->get('wt-deleted'))->toBeNull()
-            ->and($store->get('wt-dead')?->pid)->toBe(44444)
-            ->and($store->get('wt-live')?->pid)->toBe(11111);
+            ->and($store->get('wt-dead-vite')?->vite_pid)->toBe(44444)
+            ->and($store->get('wt-dead-vite')?->vite_proxy_paths)->toBe(['/@vite', '/__vite_hmr']);
     } finally {
         exec('rm -rf '.escapeshellarg($base));
     }
@@ -316,7 +318,8 @@ it('generates the systemd unit file and runs systemctl enable for install-servic
     $unit = InstallServiceCommand::buildUnitFile('ubuntu', '/usr/local/bin/vsl');
 
     expect($unit)
-        ->toContain('After=network-online.target caddy.service')
+        ->toContain('After=network-online.target')
+        ->not->toContain('caddy.service')
         ->toContain('User=ubuntu')
         ->toContain('Environment=HOME=/home/ubuntu')
         ->toContain('ExecStart=/usr/local/bin/vsl resurrect')
@@ -346,7 +349,7 @@ it('generates the systemd unit file and runs systemctl enable for install-servic
 
     Process::assertRan(fn ($process) => str_contains(
         is_array($process->command) ? implode(' ', $process->command) : $process->command,
-        'systemctl enable caddy.service vsl-resurrect.service'
+        'systemctl enable vsl-resurrect.service'
     ));
 });
 
@@ -377,28 +380,19 @@ it('supports vsl up --no-qr --json and vsl list --prune', function () {
     $store = new StateStore($paths);
     $this->app->instance(VslPaths::class, $paths);
     $this->app->instance(StateStore::class, $store);
-    $this->app->instance(IpResolver::class, new IpResolver($paths));
 
-    $_ENV['VSL_PUBLIC_IP'] = '192.0.2.42';
-
-    Http::fake([
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0' => Http::response(['listen' => [':80', ':443']], 200),
-        'http://127.0.0.1:2019/id/vsl-*' => Http::response([], 200),
-        'http://127.0.0.1:2019/config/apps/http/servers/srv0/routes' => Http::response([], 200),
-    ]);
-
-    $this->mock(OctaneManager::class, function (MockInterface $mock): void {
-        $mock->shouldReceive('allocatePort')->once()->andReturn(9110);
-        $mock->shouldReceive('spawnDetached')->once()->andReturn([
-            'port' => 9110,
-            'pid' => 65001,
-            'pgid' => 65001,
-            'log' => '/tmp/feat-json-out.log',
-            'reload_strategy' => 'stateless-dev',
+    $this->mock(YerdClient::class, function (MockInterface $mock): void {
+        $mock->shouldReceive('buildPreviewUrl')->once()->andReturn([
+            'tld' => 'test',
+            'domain' => 'feat-json-out.test',
+            'url' => 'https://feat-json-out.test',
         ]);
-        $mock->shouldReceive('waitUntilListening')->once()->with(9110, 65001, 65001, '/tmp/feat-json-out.log');
-        $mock->shouldReceive('isAlive')->with(65001)->andReturn(true);
-        $mock->shouldReceive('isAlive')->with(99999)->andReturn(false);
+        $mock->shouldReceive('detectParentPhpVersion')->once()->andReturn('8.5');
+        $mock->shouldReceive('registerSite')->once()->andReturn([]);
+        $mock->shouldReceive('listSites')->once()->andReturn([
+            'feat-json-out' => ['name' => 'feat-json-out', 'php' => '8.5', 'secure' => true],
+        ]);
+        $mock->shouldReceive('unregisterSite')->once()->with('stale-branch', []);
     });
 
     try {
@@ -408,19 +402,16 @@ it('supports vsl up --no-qr --json and vsl list --prune', function () {
         expect($exitUp)->toBe(0)
             ->and($upJson)->toBeArray()
             ->and($upJson['slug'])->toBe('feat-json-out')
-            ->and($upJson['url'])->toBe('https://feat-json-out.192-0-2-42.sslip.io')
-            ->and($upJson['port'])->toBe(9110)
+            ->and($upJson['domain'])->toBe('feat-json-out.test')
+            ->and($upJson['url'])->toBe('https://feat-json-out.test')
             ->and($upJson['elapsed'])->toMatch('/^\d+(ms|\.\d{2}s)$/');
 
-        // Add a dead entry and verify list --prune removes only the dead entry
+        // Add a missing/unlinked entry and verify list --prune removes only the stale entry
         $store->put(new WorktreeState(
             slug: 'stale-branch',
             branch: 'stale/branch',
-            domain: 'stale-branch.192-0-2-42.sslip.io',
-            url: 'https://stale-branch.192-0-2-42.sslip.io',
-            port: 9111,
-            pid: 99999,
-            pgid: 99999,
+            domain: 'stale-branch.test',
+            url: 'https://stale-branch.test',
             path: $base.'/missing',
             parent_path: $mainRepo,
             created_at: '2026-11-19T12:00:00+00:00',
@@ -431,12 +422,11 @@ it('supports vsl up --no-qr --json and vsl list --prune', function () {
 
         expect($exitList)->toBe(0)
             ->and($listOutput)->toContain('feat-json-out')
-            ->and($listOutput)->toContain('RUNNING')
+            ->and($listOutput)->toContain('LINKED')
             ->and($listOutput)->toContain('Pruned 1 dead worktree(s).')
             ->and($store->get('stale-branch'))->toBeNull()
             ->and($store->get('feat-json-out'))->not->toBeNull();
     } finally {
-        unset($_ENV['VSL_PUBLIC_IP']);
         exec('rm -rf '.escapeshellarg($base));
     }
 });

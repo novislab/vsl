@@ -109,7 +109,7 @@ class DatabaseManager
         }
 
         $pid = (int) trim($result->output());
-        $pgid = OctaneManager::resolveChildPgid($pid);
+        $pgid = ProcessManager::resolveChildPgid($pid);
 
         return [
             'pid' => $pid,
@@ -156,7 +156,7 @@ class DatabaseManager
         }
 
         $pid = (int) trim($result->output());
-        $pgid = OctaneManager::resolveChildPgid($pid);
+        $pgid = ProcessManager::resolveChildPgid($pid);
 
         return [
             'pid' => $pid,

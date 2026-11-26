@@ -3,10 +3,10 @@
 namespace App\Commands;
 
 use App\Commands\Concerns\InteractsWithVslUi;
-use App\Services\CaddyClient;
-use App\Services\OctaneManager;
+use App\Services\ProcessManager;
 use App\Services\StateStore;
 use App\Services\ViteManager;
+use App\Services\YerdClient;
 use App\Support\VslPaths;
 use LaravelZero\Framework\Commands\Command;
 use Throwable;
@@ -23,20 +23,20 @@ class ResurrectCommand extends Command
     protected $signature = 'resurrect
         {--json : Output result as JSON}';
 
-    protected $description = 'Restore active worktree previews, restart dead Octane & Vite workers, and re-register Caddy routes';
+    protected $description = 'Restore tracked Yerd .test worktree previews, prune missing directories, and restart dead Vite workers';
 
     public function handle(
         StateStore $stateStore,
-        OctaneManager $octane,
+        ProcessManager $processManager,
         ViteManager $viteManager,
-        CaddyClient $caddy,
+        YerdClient $yerd,
         VslPaths $paths,
     ): int {
         $this->startTimer();
         $json = (bool) $this->option('json');
         $this->setupPromptsUi($json);
 
-        intro('VSL · Resurrecting Worktree Previews');
+        intro('VSL · Resurrecting Worktree Previews (Yerd)');
 
         $states = $stateStore->all();
         $pruned = 0;
@@ -44,13 +44,9 @@ class ResurrectCommand extends Command
         $restored = 0;
         $errors = [];
 
-        $usedPorts = [];
         $usedVitePorts = [];
         foreach ($states as $state) {
-            if (is_dir($state->path) && $octane->isAlive($state->pid)) {
-                $usedPorts[] = $state->port;
-            }
-            if (is_dir($state->path) && $state->vite_port !== null && $state->vite_pid !== null && $octane->isAlive($state->vite_pid)) {
+            if (is_dir($state->path) && $state->vite_port !== null && $state->vite_pid !== null && $processManager->isAlive($state->vite_pid)) {
                 $usedVitePorts[] = $state->vite_port;
             }
         }
@@ -58,9 +54,13 @@ class ResurrectCommand extends Command
         foreach ($states as $state) {
             if (! is_dir($state->path)) {
                 try {
-                    $caddy->deleteRoute($state->slug);
+                    $yerd->unregisterSite($state->slug, $state->vite_proxy_paths);
                 } catch (Throwable) {
-                    // Continue pruning missing directory even if route was absent
+                    // Continue pruning missing directory even if site was already unlinked
+                }
+
+                if ($state->vite_pid !== null && $state->vite_pid > 0) {
+                    $processManager->stop($state->vite_pid, $state->vite_pgid ?: $state->vite_pid);
                 }
 
                 $stateStore->remove($state->slug);
@@ -79,42 +79,41 @@ class ResurrectCommand extends Command
                 $current = $state;
                 $changed = false;
 
-                if (! $octane->isAlive($state->pid)) {
-                    $port = $octane->allocatePort($usedPorts, $state->port);
-                    $worker = $octane->start($state->path, $state->slug, $port);
-                    $usedPorts[] = $worker['port'];
-
-                    $current = $current->withWorker($worker['port'], $worker['pid'], $worker['pgid']);
-                    $changed = true;
-                    $restarted++;
-                }
-
                 $viteConfig = $viteManager->detectConfig($state->path);
                 $vitePaths = $viteConfig['customPaths'] ?? [];
                 $hmrPath = $viteConfig['hmrPath'] ?? null;
 
-                if ($state->vite_port !== null && $viteConfig !== null && ! $octane->isAlive($state->vite_pid ?? 0)) {
+                if ($state->vite_port !== null && $viteConfig !== null && ! $processManager->isAlive($state->vite_pid ?? 0)) {
                     $vitePort = $viteManager->allocatePort($usedVitePorts, $state->vite_port);
-                    $viteJob = $viteManager->dispatch($state->path, $state->slug, $state->domain, $vitePort);
+                    $viteJob = $viteManager->dispatch($state->path, $state->slug, $state->domain, $vitePort, $state->secure);
                     if ($viteJob !== null) {
                         $usedVitePorts[] = $viteJob['port'];
+                        $hmrPath = $viteJob['hmrPath'];
                         $current = $current->withVite($viteJob['port'], $viteJob['pid'], $viteJob['pgid']);
                         $changed = true;
+                        $restarted++;
                     }
+                }
+
+                $proxyPaths = $yerd->registerSite(
+                    slug: $current->slug,
+                    worktreePath: $current->path,
+                    secure: $current->secure,
+                    phpVersion: $current->php_version,
+                    vitePort: $current->vite_port,
+                    vitePaths: $vitePaths,
+                    hmrPath: $hmrPath,
+                );
+
+                if ($proxyPaths !== $current->vite_proxy_paths) {
+                    $current = $current->withVite($current->vite_port, $current->vite_pid, $current->vite_pgid, $proxyPaths);
+                    $changed = true;
                 }
 
                 if ($changed) {
                     $stateStore->put($current);
                 }
 
-                $caddy->registerRoute(
-                    slug: $current->slug,
-                    domain: $current->domain,
-                    port: $current->port,
-                    vitePort: $current->vite_port,
-                    vitePaths: $vitePaths,
-                    hmrPath: $hmrPath,
-                );
                 $restored++;
             } catch (Throwable $e) {
                 $errors[$state->slug] = $e->getMessage();
@@ -143,8 +142,8 @@ class ResurrectCommand extends Command
         }
 
         note(implode("\n", [
-            "Restored routes:   {$restored}",
-            "Restarted workers: {$restarted}",
+            "Restored sites:    {$restored}",
+            "Restarted Vite:    {$restarted}",
             "Pruned missing:    {$pruned}",
         ]));
 

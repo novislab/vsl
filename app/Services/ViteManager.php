@@ -161,7 +161,7 @@ class ViteManager
 
     /**
      * Write an untracked wrapper Vite config in ~/.vsl/vite/ that wraps the user's vite.config.*
-     * and injects HTTPS sslip.io origin + WSS HMR settings without modifying the git working tree.
+     * and injects Yerd .test origin + WSS/WS HMR settings without modifying the git working tree.
      */
     public function writeWrapperConfig(string $slug, string $userConfigPath, bool $isTypeScript): string
     {
@@ -169,6 +169,7 @@ class ViteManager
         $ext = $isTypeScript ? 'ts' : 'mjs';
         $wrapperPath = $this->paths->viteDir().'/'.$slug.'.config.'.$ext;
         $escapedImport = json_encode('file://'.$userConfigPath, JSON_UNESCAPED_SLASHES);
+        $defaultHmrPath = YerdClient::DEFAULT_HMR_PATH;
 
         $script = <<<JS
 import userConfig from {$escapedImport};
@@ -176,9 +177,12 @@ import userConfig from {$escapedImport};
 export default async function vslViteConfig(env) {
   const resolved = typeof userConfig === 'function' ? await userConfig(env) : (userConfig ?? {});
   const domain = process.env.VSL_PREVIEW_DOMAIN;
+  const isSecure = process.env.VSL_PREVIEW_SECURE !== '0';
+  const origin = process.env.VSL_PREVIEW_URL || `\${isSecure ? 'https' : 'http'}://\${domain}`;
   const port = Number(process.env.VSL_VITE_PORT || 5173);
   const userServer = resolved.server ?? {};
   const userHmr = typeof userServer.hmr === 'object' && userServer.hmr !== null ? userServer.hmr : {};
+  const hmrPath = userHmr.path && userHmr.path !== '/' ? userHmr.path : '{$defaultHmrPath}';
 
   return {
     ...resolved,
@@ -188,12 +192,13 @@ export default async function vslViteConfig(env) {
       port,
       strictPort: true,
       cors: true,
-      origin: `https://\${domain}`,
+      origin,
       hmr: {
         ...userHmr,
         host: domain,
-        protocol: 'wss',
-        clientPort: 443,
+        path: hmrPath,
+        protocol: isSecure ? 'wss' : 'ws',
+        clientPort: isSecure ? 443 : 80,
       },
     },
   };
@@ -216,11 +221,16 @@ JS;
      *     pgid: int,
      *     log: string,
      *     customPaths: array<int, string>,
-     *     hmrPath: string|null
+     *     hmrPath: string
      * }|null
      */
-    public function dispatch(string $worktreePath, string $slug, string $domain, int $vitePort): ?array
-    {
+    public function dispatch(
+        string $worktreePath,
+        string $slug,
+        string $domain,
+        int $vitePort,
+        bool $secure = true,
+    ): ?array {
         $detected = $this->detectConfig($worktreePath);
         if ($detected === null) {
             return null;
@@ -234,6 +244,7 @@ JS;
         $this->paths->ensureDirectories();
         $logFile = $this->paths->viteLogFile($slug);
         $wrapperPath = $this->writeWrapperConfig($slug, $detected['configFile'], $detected['isTypeScript']);
+        $previewUrl = ($secure ? 'https' : 'http')."://{$domain}";
 
         $viteArgs = sprintf(
             '--config %s --host 127.0.0.1 --port %d',
@@ -242,8 +253,10 @@ JS;
         );
 
         $shellCmd = sprintf(
-            'setsid env VSL_PREVIEW_DOMAIN=%s VSL_VITE_PORT=%d %s %s > %s 2>&1 < /dev/null & echo $!',
+            'setsid env VSL_PREVIEW_DOMAIN=%s VSL_PREVIEW_URL=%s VSL_PREVIEW_SECURE=%s VSL_VITE_PORT=%d %s %s > %s 2>&1 < /dev/null & echo $!',
             escapeshellarg($domain),
+            escapeshellarg($previewUrl),
+            $secure ? '1' : '0',
             $vitePort,
             $runner,
             $viteArgs,
@@ -260,7 +273,10 @@ JS;
             return null;
         }
 
-        $pgid = OctaneManager::resolveChildPgid($pid);
+        $pgid = ProcessManager::resolveChildPgid($pid);
+        $hmrPath = ($detected['hmrPath'] !== null && $detected['hmrPath'] !== '' && $detected['hmrPath'] !== '/')
+            ? $detected['hmrPath']
+            : YerdClient::DEFAULT_HMR_PATH;
 
         return [
             'port' => $vitePort,
@@ -268,14 +284,14 @@ JS;
             'pgid' => $pgid,
             'log' => $logFile,
             'customPaths' => $detected['customPaths'],
-            'hmrPath' => $detected['hmrPath'],
+            'hmrPath' => $hmrPath,
         ];
     }
 
     /**
      * Stop the detached Vite process group and remove public/hot + wrapper/log artifacts.
      */
-    public function cleanup(string $worktreePath, string $slug, ?int $pid, ?int $pgid, OctaneManager $processManager): void
+    public function cleanup(string $worktreePath, string $slug, ?int $pid, ?int $pgid, ProcessManager $processManager): void
     {
         if ($pid !== null && $pid > 0) {
             $processManager->stop($pid, $pgid ?: $pid);
@@ -305,7 +321,10 @@ JS;
         $candidates = [];
 
         if (is_string($home) && $home !== '') {
-            $candidates[] = rtrim($home, '/').'/.bun/bin/bun';
+            $home = rtrim($home, '/');
+            $candidates[] = $home.'/.local/share/yerd/bin/bun';
+            $candidates[] = $home.'/Library/Application Support/yerd/bin/bun';
+            $candidates[] = $home.'/.bun/bin/bun';
         }
         $candidates[] = '/usr/local/bin/bun';
         $candidates[] = '/usr/bin/bun';

@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-VERSION="${VSL_VERSION:-1.0.0}"
+VERSION="${VSL_VERSION:-1.3}"
 PHP_VERSION="${VSL_PHP_VERSION:-8.3}"
 EXTENSIONS="pcntl,posix,curl,openssl,mbstring,tokenizer,ctype,filter,json,sockets,phar,zlib"
 SPC_DIR="${ROOT_DIR}/.spc"

@@ -125,17 +125,6 @@ class StateStore
     /**
      * @return array<int, int>
      */
-    public function reservedPorts(): array
-    {
-        return array_values(array_map(
-            static fn (WorktreeState $state): int => $state->port,
-            $this->all()
-        ));
-    }
-
-    /**
-     * @return array<int, int>
-     */
     public function reservedVitePorts(): array
     {
         $ports = [];

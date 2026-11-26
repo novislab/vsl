@@ -15,14 +15,17 @@ it('persists, reads, finds, mutates, and removes state atomically with flock', f
     $state = new WorktreeState(
         slug: 'feat-auth',
         branch: 'feat/Auth',
-        domain: 'feat-auth.203-0-113-10.sslip.io',
-        url: 'https://feat-auth.203-0-113-10.sslip.io',
-        port: 9100,
-        pid: 4242,
-        pgid: 4242,
+        domain: 'feat-auth.test',
+        url: 'https://feat-auth.test',
         path: realpath($worktreePath) ?: $worktreePath,
         parent_path: $base.'/repo',
         created_at: '2026-11-19T14:00:00+00:00',
+        secure: true,
+        php_version: '8.5',
+        vite_port: 5173,
+        vite_pid: 4242,
+        vite_pgid: 4242,
+        vite_proxy_paths: ['/@vite', '/__vite_hmr'],
     );
 
     try {
@@ -31,7 +34,7 @@ it('persists, reads, finds, mutates, and removes state atomically with flock', f
         expect(is_file($paths->stateFile()))->toBeTrue()
             ->and(is_file($paths->stateLockFile()))->toBeTrue()
             ->and($store->get('feat-auth')?->toArray())->toBe($state->toArray())
-            ->and($store->reservedPorts())->toBe([9100]);
+            ->and($store->reservedVitePorts())->toBe([5173]);
 
         // Lookup by slug, branch, normalized slug, and path/subdir
         expect($store->findByTarget('feat-auth')?->slug)->toBe('feat-auth')
@@ -42,14 +45,15 @@ it('persists, reads, finds, mutates, and removes state atomically with flock', f
 
         // Atomic mutate
         $updatedCount = $store->mutate(function (array $states): array {
-            $states['feat-auth'] = $states['feat-auth']->withWorker(9105, 5555, 5555);
+            $states['feat-auth'] = $states['feat-auth']->withVite(5174, 5555, 5555, ['/@vite']);
 
             return [$states, count($states)];
         });
 
         expect($updatedCount)->toBe(1)
-            ->and($store->get('feat-auth')?->port)->toBe(9105)
-            ->and($store->get('feat-auth')?->pid)->toBe(5555);
+            ->and($store->get('feat-auth')?->vite_port)->toBe(5174)
+            ->and($store->get('feat-auth')?->vite_pid)->toBe(5555)
+            ->and($store->get('feat-auth')?->vite_proxy_paths)->toBe(['/@vite']);
 
         // Remove
         expect($store->remove('feat-auth'))->toBeTrue()

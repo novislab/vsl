@@ -76,7 +76,11 @@ if [[ ! -x "$VSL_BIN" ]] || [[ ! -f "${TMP_DIR}/vsl" ]]; then
   log "Installing Composer dependencies..."
   composer install --no-dev --optimize-autoloader --no-interaction --quiet
 
-  VERSION="$(git describe --tags --always 2>/dev/null || echo '1.0.0')"
+  VERSION="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  VERSION="${VERSION#v}"
+  if [[ -z "$VERSION" ]]; then
+    VERSION="$(php -r '$c = require "config/app.php"; echo is_string($c["version"] ?? null) ? $c["version"] : "1.3";')"
+  fi
   log "Building standalone vsl PHAR (${VERSION})..."
   php vsl app:build vsl --build-version="${VERSION}" --no-interaction >/dev/null
 

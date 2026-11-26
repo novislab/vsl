@@ -3,11 +3,11 @@
 namespace App\Commands;
 
 use App\Commands\Concerns\InteractsWithVslUi;
-use App\Services\CaddyClient;
 use App\Services\DatabaseManager;
-use App\Services\OctaneManager;
+use App\Services\ProcessManager;
 use App\Services\StateStore;
 use App\Services\ViteManager;
+use App\Services\YerdClient;
 use App\Support\VslPaths;
 use LaravelZero\Framework\Commands\Command;
 use Throwable;
@@ -29,12 +29,12 @@ class DownCommand extends Command
         {--keep-db : Preserve the isolated database instead of dropping it in the background}
         {--json : Output result as JSON}';
 
-    protected $description = 'Stop Octane & Vite workers, remove the Caddy route, and drop the isolated database for a worktree preview';
+    protected $description = 'Unlink the Yerd .test site, stop Vite workers, and drop the isolated database for a worktree preview';
 
     public function handle(
-        OctaneManager $octane,
+        ProcessManager $processManager,
         ViteManager $viteManager,
-        CaddyClient $caddy,
+        YerdClient $yerd,
         DatabaseManager $databaseManager,
         StateStore $stateStore,
         VslPaths $paths,
@@ -43,7 +43,7 @@ class DownCommand extends Command
         $json = (bool) $this->option('json');
         $this->setupPromptsUi($json);
 
-        intro('VSL · Worktree Preview Down');
+        intro('VSL · Worktree Preview Down (Yerd)');
 
         $targetArg = $this->argument('target');
         $target = is_string($targetArg) && $targetArg !== '' ? $targetArg : null;
@@ -107,14 +107,13 @@ class DownCommand extends Command
         $dbDroppedInBg = false;
 
         try {
-            $this->spinStep("Stopping workers (PID {$state->pid}) and removing Caddy route...", function () use ($octane, $viteManager, $caddy, $databaseManager, $stateStore, $paths, $state, &$dbDroppedInBg): void {
+            $this->spinStep("Unlinking {$state->domain} from Yerd and stopping background workers...", function () use ($processManager, $viteManager, $yerd, $databaseManager, $stateStore, $paths, $state, &$dbDroppedInBg): void {
                 if ($state->db_pid !== null && $state->db_pid > 0) {
-                    $octane->stop($state->db_pid, $state->db_pgid ?: $state->db_pid);
+                    $processManager->stop($state->db_pid, $state->db_pgid ?: $state->db_pid);
                 }
 
-                $viteManager->cleanup($state->path, $state->slug, $state->vite_pid, $state->vite_pgid, $octane);
-                $octane->stop($state->pid, $state->pgid);
-                $caddy->deleteRoute($state->slug);
+                $viteManager->cleanup($state->path, $state->slug, $state->vite_pid, $state->vite_pgid, $processManager);
+                $yerd->unregisterSite($state->slug, $state->vite_proxy_paths);
                 $stateStore->remove($state->slug);
 
                 if (! $this->option('keep-db') && $state->db_connection !== null && $state->db_name !== null) {
@@ -144,8 +143,8 @@ class DownCommand extends Command
                 'removed' => true,
                 'slug' => $state->slug,
                 'branch' => $state->branch,
+                'domain' => $state->domain,
                 'url' => $state->url,
-                'port' => $state->port,
                 'vite_port' => $state->vite_port,
                 'db_name' => $state->db_name,
                 'db_teardown_dispatched' => $dbDroppedInBg,
@@ -158,7 +157,7 @@ class DownCommand extends Command
 
         $lines = [
             "Stopped: {$state->slug} ({$state->url})",
-            "Octane:  PID {$state->pid} / port {$state->port} terminated",
+            "Yerd:    {$state->domain} unlinked",
         ];
 
         if ($state->vite_port !== null) {
